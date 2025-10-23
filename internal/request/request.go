@@ -2,6 +2,7 @@ package request
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 )
@@ -100,11 +101,15 @@ func RequestFromReader(reader io.Reader) (*Request, error) {
 	for !request.done() {
 		n, err := reader.Read(buf[bufLen:])
 		if err != nil {
+			if errors.Is(err, io.EOF) {
+				request.state = StateDone
+				break
+			}
 			return nil, err
 		}
 
 		bufLen += n
-		readN, err := request.parse(buf[:bufLen+n])
+		readN, err := request.parse(buf[:bufLen])
 		if err != nil {
 			return nil, err
 		}
