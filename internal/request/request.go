@@ -2,11 +2,25 @@ package request
 
 import (
 	"bytes"
-	"errors"
 	"fmt"
 	"io"
 	"learn_http/internal/headers"
+	"strconv"
 )
+
+func getInt(headers *headers.Headers, name string, defaultValue int) int {
+	valueStr, exists := headers.Get(name)
+	if !exists {
+		return defaultValue
+	}
+
+	value, err := strconv.Atoi(valueStr)
+	if err != nil {
+		return defaultValue
+	}
+
+	return value
+}
 
 type RequestLine struct {
 	HttpVersion   string
@@ -17,6 +31,7 @@ type RequestLine struct {
 type Request struct {
 	RequestLine RequestLine
 	Headers     *headers.Headers
+	Body        string
 	state       parserState
 }
 
@@ -25,6 +40,9 @@ func (r *Request) parse(data []byte) (int, error) {
 outer:
 	for {
 		currentData := data[read:]
+		if len(currentData) == 0 {
+			break outer
+		}
 		switch r.state {
 		case StateInit:
 			rl, n, err := parseRequestLine(currentData)
@@ -52,9 +70,27 @@ outer:
 			read += n
 
 			if done {
-				r.state = StateDone
+				if r.hasBody() {
+					r.state = StateBody
+				} else {
+					r.state = StateDone
+				}
 			}
 
+		case StateBody:
+			contentLength := getInt(r.Headers, "content-length", 0)
+			if contentLength == 0 {
+				panic("chunked not implemented")
+			}
+
+			remaining := min(contentLength-len(r.Body), len(currentData))
+			r.Body += string(currentData[:remaining])
+			read += remaining
+
+			if len(r.Body) == contentLength {
+				r.state = StateDone
+				break outer
+			}
 		case StateDone:
 			break outer
 
@@ -73,6 +109,7 @@ func (r *Request) done() bool {
 func newRequest() *Request {
 	return &Request{
 		state:   StateInit,
+		Body:    "",
 		Headers: headers.NewHeaders(),
 	}
 }
@@ -83,6 +120,7 @@ const (
 	StateInit    parserState = "init"
 	StateDone    parserState = "done"
 	StateHeaders parserState = "headers"
+	StateBody    parserState = "body"
 )
 
 var ERROR_MALFORMED_REQUEST_LINE = fmt.Errorf("malformed request line")
@@ -117,6 +155,12 @@ func parseRequestLine(b []byte) (*RequestLine, int, error) {
 	return rl, read, nil
 }
 
+func (r *Request) hasBody() bool {
+	//TODO: Update during chunked encoding
+	length := getInt(r.Headers, "content-length", 0)
+	return length > 0
+}
+
 func RequestFromReader(reader io.Reader) (*Request, error) {
 	request := newRequest()
 
@@ -125,10 +169,6 @@ func RequestFromReader(reader io.Reader) (*Request, error) {
 	for !request.done() {
 		n, err := reader.Read(buf[bufLen:])
 		if err != nil {
-			if errors.Is(err, io.EOF) {
-				request.state = StateDone
-				break
-			}
 			return nil, err
 		}
 
