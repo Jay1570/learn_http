@@ -42,7 +42,12 @@ func NewHeaders() *Headers {
 
 func (h *Headers) Get(name string) (string, bool) {
 	str, ok := h.headers[strings.ToLower(name)]
-	return  str, ok
+	return str, ok
+}
+
+func (h *Headers) Replace(name, value string) {
+	name = strings.ToLower(name)
+	h.headers[name] = value
 }
 
 func (h *Headers) Set(name, value string) {
